@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Elit's Büfe — Menü</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="robots" content="noindex">
+  <style>
+    :root{--bg:#000;--accent:#ffcc00;--muted:#ddd;--text:#fff}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{display:flex;flex-direction:column;height:100vh}
+    header{height:56px;display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)}
+    .title{font-weight:700}
+    .controls{display:flex;gap:8px}
+    .btn{background:var(--accent);color:#111;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;border:0;cursor:pointer}
+    .linkbtn{background:transparent;border:1px solid rgba(255,255,255,.12);color:var(--text);padding:8px 10px;border-radius:8px;text-decoration:none}
+    main{flex:1;position:relative}
+    iframe, object{position:absolute;inset:0;width:100%;height:100%;border:0;background:#111}
+    #loading{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--muted);z-index:20;text-align:center}
+    .fallbackBox{position:absolute;left:50%;top:55%;transform:translate(-50%,-50%);text-align:center;z-index:30;display:none}
+    .refreshSmall{background:transparent;border:1px solid rgba(255,255,255,.08);padding:6px;border-radius:8px;color:var(--muted);font-size:13px}
+    @media(max-width:420px){ header{height:48px;padding:6px 8px} .title{font-size:15px} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="title">Elit's Büfe — Menü</div>
+      <div class="controls">
+        <button id="refreshBtn" class="refreshSmall" title="Menüyü yenile (cache temizle)">Yenile</button>
+        <a id="openRawBtn" class="btn" target="_blank" rel="noopener">Menüyü Yeni Sekmede Aç</a>
+      </div>
+    </header>
+
+    <main>
+      <div id="loading">Menü yükleniyor…</div>
+
+      <!-- İlk deneme: gömme iframe (relative path kullanıyoruz) -->
+      <iframe id="pdfFrame" src="" allowfullscreen></iframe>
+
+      <!-- Fallback object (bazı tarayıcılarda daha iyi davranır) -->
+      <object id="pdfObject" data="" type="application/pdf" aria-label="Elit's Büfe Menü" style="display:none"></object>
+
+      <div class="fallbackBox" id="fallbackBox">
+        <p style="color:var(--muted);margin-bottom:12px">Tarayıcınız PDF gömmeyi desteklemiyor veya dosya yüklenemedi.</p>
+        <a id="fallbackOpen" class="btn" target="_blank" rel="noopener">Menüyü Aç / İndir</a>
+      </div>
+    </main>
+  </div>
+
+<script>
+(function(){
+  // KÖKTEKİ PDF'in relatif yolu (Pages ile aynı origin). Eğer farklı konumdaysa değiştir.
+  const RELATIVE_PDF = 'menu.pdf';
+  // raw GitHub URL (herhangi bir zamanda direk açma için). branch main varsayılmıştır.
+  const RAW_PDF = 'https://raw.githubusercontent.com/BerkeA111/berkea111.github.io/main/menu.pdf';
+
+  const frame = document.getElementById('pdfFrame');
+  const obj = document.getElementById('pdfObject');
+  const loading = document.getElementById('loading');
+  const fallbackBox = document.getElementById('fallbackBox');
+  const fallbackOpen = document.getElementById('fallbackOpen');
+  const openRawBtn = document.getElementById('openRawBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  // Kullanıcı her yüklemede en güncel PDF'i almak istiyor:
+  // cacheBuster'ı Date.now() ile oluşturuyoruz (her load taze istektir).
+  // NOT: Eğer çok sık yeniden indirme istemezseniz bunu update etmek için bir version.txt kullanabilirsiniz.
+  function makeCacheBuster(){ return Date.now(); }
+
+  function isIOS(){
+    return /iP(hone|od|ad)/.test(navigator.platform) || (navigator.userAgent.includes('Macintosh') && 'ontouchend' in document);
+  }
+
+  // build url'ler
+  function urlWithV(base){
+    return base + '?v=' + makeCacheBuster();
+  }
+
+  // Set buttons/href
+  openRawBtn.href = urlWithV(RAW_PDF);
+  fallbackOpen.href = urlWithV(RAW_PDF);
+
+  // Primary attempt: gömme iframe ile göster
+  function tryEmbed(){
+    const embedUrl = urlWithV(RELATIVE_PDF);
+    frame.src = embedUrl;
+    obj.style.display = 'none';
+    fallbackBox.style.display = 'none';
+    loading.style.display = 'block';
+
+    // Timeout: eğer iframe 3.5s içinde yüklenmezse fallback'a geç
+    let loaded = false;
+    const loadTimeout = setTimeout(()=> {
+      if(!loaded){
+        // iOS özel durum: iOS'ta gömme çok problem çıkarır -> direkt raw aç
+        if(isIOS()){
+          window.location.replace(urlWithV(RAW_PDF));
+          return;
+        }
+        // Diğerlerinde önce object ile dene (bazı Androidlerde object daha iyi)
+        tryObject();
+      }
+    }, 3500);
+
+    frame.onload = function(){
+      loaded = true;
+      clearTimeout(loadTimeout);
+      loading.style.display = 'none';
+      // iframe yüklendi ama içindeki PDF keşfedilemeyebilir (bazı tarayıcılarda bozuk görünür)
+      // Yine de iframe gösterilsin.
+    };
+
+    // error event nadiren tetiklenir ancak handle et
+    frame.onerror = function(){
+      clearTimeout(loadTimeout);
+      tryObject();
+    };
+  }
+
+  // Secondary attempt: object tag
+  function tryObject(){
+    const objUrl = urlWithV(RELATIVE_PDF);
+    obj.data = objUrl;
+    obj.style.display = 'block';
+    frame.style.display = 'none';
+    loading.textContent = 'Menü yükleniyor...';
+    loading.style.display = 'block';
+
+    // bazı tarayıcılar object load event tetiklemez -> zaman aşımıyla fallback göster
+    let objLoaded = false;
+    const objTimeout = setTimeout(()=>{
+      if(!objLoaded){
+        showFallback();
+      }
+    }, 3500);
+
+    // object için event desteği sınırlı; bu yüzden güvenilir kontrol yok
+    try{
+      obj.onload = function(){ objLoaded = true; clearTimeout(objTimeout); loading.style.display='none'; };
+    }catch(e){}
+  }
+
+  // Son fallback: kullanıcıyı yeni sekmede raw PDF açmaya yönlendir / göster buton
+  function showFallback(){
+    loading.style.display = 'none';
+    fallbackBox.style.display = 'block';
+    fallbackOpen.href = urlWithV(RAW_PDF);
+  }
+
+  // Kullanıcı "Yenile" butonu bastığında cache-buster'lı yeni URL ile tekrar dene
+  refreshBtn.addEventListener('click', function(){
+    // Force reload with new cache buster
+    tryEmbed();
+  });
+
+  // sayfa ilk açılışta embed dene
+  tryEmbed();
+
+  // Eğer iframe/obj görünür durumda değilse ve 10s sonra hâlâ bir şey yoksa kesin fallback
+  setTimeout(()=>{
+    const fVisible = frame && frame.style.display !== 'none';
+    const oVisible = obj && obj.style.display !== 'none';
+    if(!fVisible && !oVisible){
+      showFallback();
+    }
+  },10000);
+
+})();
+</script>
+</body>
+</html>
