@@ -1,4 +1,5 @@
 <!doctype html>
+
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
@@ -21,10 +22,12 @@
     #loading{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--muted);z-index:20;text-align:center}
     .fallbackBox{position:absolute;left:50%;top:55%;transform:translate(-50%,-50%);text-align:center;z-index:30;display:none}
     .refreshSmall{background:transparent;border:1px solid rgba(255,255,255,.08);padding:6px;border-radius:8px;color:var(--muted);font-size:13px}
+    /* iOS için PDF sayfalarını gösterecek container */
     .pdfPagesContainer{position:absolute;inset:0;overflow:auto;padding:12px;box-sizing:border-box}
     .pdfPageCanvas{display:block;margin:10px auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.6);background:#fff}
     @media(max-width:420px){ header{height:48px;padding:6px 8px} .title{font-size:15px} }
   </style>
+  <!-- PDF.js (sadece iOS branch kullanacak ama yüklemek zararsız) -->
   <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
 </head>
 <body>
@@ -35,25 +38,34 @@
         <button id="refreshBtn" class="refreshSmall" title="Menüyü yenile (cache temizle)">Yenile</button>
         <a id="openRawBtn" class="btn" target="_blank" rel="noopener">Menüyü Yeni Sekmede Aç</a>
       </div>
-    </header>
+    </header><main>
+  <div id="loading">Menü yükleniyor…</div>
 
-    <main>
-      <div id="loading">Menü yükleniyor…</div>
-      <iframe id="pdfFrame" src="" allowfullscreen></iframe>
-      <embed id="pdfEmbed" src="" type="application/pdf" style="display:none" />
-      <object id="pdfObject" data="" type="application/pdf" aria-label="Elit's Büfe Menü" style="display:none"></object>
-      <div id="pdfPagesContainer" class="pdfPagesContainer" style="display:none"></div>
-      <div class="fallbackBox" id="fallbackBox">
-        <p style="color:var(--muted);margin-bottom:12px">Tarayıcınız PDF gömmeyi desteklemiyor veya dosya yüklenemedi.</p>
-        <a id="fallbackOpen" class="btn" target="_blank" rel="noopener">Menüyü Aç / İndir</a>
-      </div>
-    </main>
+  <!-- Orijinal davranış için gömme iframe -->
+  <iframe id="pdfFrame" src="" allowfullscreen></iframe>
+
+  <!-- Alternatif embed (bazı iOS/Android sürümlerinde farklı davranır) -->
+  <embed id="pdfEmbed" src="" type="application/pdf" style="display:none" />
+
+  <!-- Fallback object (bazı tarayıcılarda daha iyi davranır) -->
+  <object id="pdfObject" data="" type="application/pdf" aria-label="Elit's Büfe Menü" style="display:none"></object>
+
+  <!-- iOS için PDF.js ile render edilecek container (başta gizli) -->
+  <div id="pdfPagesContainer" class="pdfPagesContainer" style="display:none"></div>
+
+  <div class="fallbackBox" id="fallbackBox">
+    <p style="color:var(--muted);margin-bottom:12px">Tarayıcınız PDF gömmeyi desteklemiyor veya dosya yüklenemedi.</p>
+    <a id="fallbackOpen" class="btn" target="_blank" rel="noopener">Menüyü Aç / İndir</a>
   </div>
+</main>
 
-<script>
+  </div><script>
 (function(){
+  // KÖKTEKİ PDF'in relatif yolu (Pages ile aynı origin). Eğer farklı konumdaysa değiştir.
   const RELATIVE_PDF = 'menu.pdf';
+  // raw GitHub URL (herhangi bir zamanda direk açma için). branch main varsayılmıştır.
   const RAW_PDF = 'https://raw.githubusercontent.com/BerkeA111/berkea111.github.io/main/menu.pdf';
+
   const frame = document.getElementById('pdfFrame');
   const embed = document.getElementById('pdfEmbed');
   const obj = document.getElementById('pdfObject');
@@ -64,74 +76,104 @@
   const refreshBtn = document.getElementById('refreshBtn');
   const pdfPagesContainer = document.getElementById('pdfPagesContainer');
 
+  // Kullanıcı her yüklemede en güncel PDF'i almak istiyor:
   function makeCacheBuster(){ return Date.now(); }
+
+  // iOS tespiti
   function isIOS(){
     return /iP(hone|od|ad)/.test(navigator.platform) || (navigator.userAgent.includes('Macintosh') && 'ontouchend' in document);
   }
-  const IOS_PDF_HASH = '#view=FitH';
+
+  // PDF open params (iOS için başlangıç ölçeği/hint)
+  const IOS_PDF_HASH = '#view=FitH'; // alternatifler: '#zoom=100' veya '#zoom=page-width'
   const GENERIC_PDF_HASH = '';
+
+  // build url'ler
   function urlWithV(base){
     const u = base + '?v=' + makeCacheBuster();
-    return isIOS() ? u + IOS_PDF_HASH : u + GENERIC_PDF_HASH;
+    if(isIOS()) return u + IOS_PDF_HASH;
+    return u + GENERIC_PDF_HASH;
   }
 
+  // Set buttons/href
   openRawBtn.href = urlWithV(RAW_PDF);
   fallbackOpen.href = urlWithV(RAW_PDF);
 
+  // iOS özel: hem otomatik indirme yap, hem PDF.js ile ilk 5 sayfayı render et
   async function handleIOS(){
+    // Gizle diğer gömme seçeneklerini
     frame.style.display = 'none';
     embed.style.display = 'none';
     obj.style.display = 'none';
     fallbackBox.style.display = 'none';
+
     loading.style.display = 'block';
     loading.textContent = 'iOS için menü hazırlanıyor…';
 
     const pdfUrl = RELATIVE_PDF + '?v=' + makeCacheBuster();
 
+    // 1) Otomatik indirme - tarayıcı izin verirse çalışır. iOS'ta bazen QuickLook açar.
     try{
       const resp = await fetch(pdfUrl, { cache: 'no-store' });
-      if(resp.ok){
-        const blob = await resp.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = 'menu.pdf';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(()=>{
-          document.body.removeChild(a);
-          URL.revokeObjectURL(blobUrl);
-        }, 1500);
-      }
+      if(!resp.ok) throw new Error('Fetch failed');
+      const blob = await resp.blob();
+
+      // programatik indirme
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = 'menu.pdf';
+      // iOS Safari çoğu zaman download attribute'u desteklemez, ancak link tıklaması ile QuickLook açılabilir
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>{
+        try{ document.body.removeChild(a); }catch(e){}
+        URL.revokeObjectURL(blobUrl);
+      }, 1500);
     }catch(e){
+      // indirme başarısız olursa kullanıcıyı fallback ile bilgilendir
       console.warn('Otomatik indirme başarısız:', e);
     }
 
+    // 2) PDF.js ile render et (ilk 5 sayfa)
     try{
       pdfPagesContainer.innerHTML = '';
       pdfPagesContainer.style.display = 'block';
+
+      // pdfjs ayar
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
+
       const loadingTask = pdfjsLib.getDocument(pdfUrl);
       const pdf = await loadingTask.promise;
-      const pageCount = Math.min(5, pdf.numPages);
-      for(let p=1; p<=pageCount; p++){
+
+      const pageCountToRender = Math.min(5, pdf.numPages);
+
+      for(let p = 1; p <= pageCountToRender; p++){
         const page = await pdf.getPage(p);
-        const viewport = page.getViewport({ scale:1 });
-        const containerWidth = Math.max(document.documentElement.clientWidth - 24, 200);
+        const viewport = page.getViewport({ scale: 1 });
+
+        // container genişliğine göre ölçek hesapla (padding'i hesaba kat)
+        const containerWidth = Math.max(document.documentElement.clientWidth - 24, 200); // padding 12px iki tarafta
         const scale = containerWidth / viewport.width;
         const scaledViewport = page.getViewport({ scale });
+
         const canvas = document.createElement('canvas');
         canvas.className = 'pdfPageCanvas';
+        // yüksek DPI için devicePixelRatio kullan
         const outputScale = window.devicePixelRatio || 1;
         canvas.width = Math.floor(scaledViewport.width * outputScale);
         canvas.height = Math.floor(scaledViewport.height * outputScale);
         canvas.style.width = Math.floor(scaledViewport.width) + 'px';
         canvas.style.height = Math.floor(scaledViewport.height) + 'px';
+
         const ctx = canvas.getContext('2d');
         ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+
         pdfPagesContainer.appendChild(canvas);
+
         await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
       }
+
       loading.style.display = 'none';
     }catch(err){
       console.error('iOS render hatası', err);
@@ -140,76 +182,122 @@
     }
   }
 
+  // Primary attempt: gömme iframe ile göster (Android ve diğerleri için değişmedi)
   function tryEmbed(){
-    if(isIOS()){ handleIOS(); return; }
+    // Eğer iOS ise özel davranışı kullan
+    if(isIOS()){
+      handleIOS();
+      return;
+    }
+
+    // temizle önceki gösterimleri
     frame.style.display = 'none';
     embed.style.display = 'none';
     obj.style.display = 'none';
     fallbackBox.style.display = 'none';
 
     const embedUrl = urlWithV(RELATIVE_PDF);
+
+    // Öncelikle iframe ile dene
     frame.src = embedUrl;
     frame.style.display = 'block';
     loading.style.display = 'block';
+
+    // Timeout: eğer iframe 3.5s içinde yüklenmezse diğer fallback'lere geç
     let loaded = false;
-    const loadTimeout = setTimeout(()=>{
-      if(!loaded) tryEmbedTag();
+    const loadTimeout = setTimeout(()=> {
+      if(!loaded){
+        tryEmbedTag();
+      }
     }, 3500);
 
-    frame.onload = function(){ loaded=true; clearTimeout(loadTimeout); loading.style.display='none'; };
-    frame.onerror = function(){ clearTimeout(loadTimeout); tryEmbedTag(); };
+    frame.onload = function(){
+      loaded = true;
+      clearTimeout(loadTimeout);
+      loading.style.display = 'none';
+    };
+
+    frame.onerror = function(){
+      clearTimeout(loadTimeout);
+      tryEmbedTag();
+    };
   }
 
+  // Alternatif: <embed> ile dene
   function tryEmbedTag(){
+    // hide others
     frame.style.display = 'none';
     obj.style.display = 'none';
+
     const eUrl = urlWithV(RELATIVE_PDF);
     embed.src = eUrl;
     embed.style.display = 'block';
     loading.style.display = 'block';
+
     let embedLoaded = false;
     const embTimeout = setTimeout(()=>{
-      if(!embedLoaded) tryObject();
+      if(!embedLoaded){
+        tryObject();
+      }
     }, 3000);
-    try{ embed.onload = function(){ embedLoaded=true; clearTimeout(embTimeout); loading.style.display='none'; }; }catch(e){}
+
+    try{
+      embed.onload = function(){ embedLoaded = true; clearTimeout(embTimeout); loading.style.display='none'; };
+    }catch(e){ }
   }
 
+  // Secondary attempt: object tag
   function tryObject(){
     frame.style.display = 'none';
     embed.style.display = 'none';
+
     const objUrl = urlWithV(RELATIVE_PDF);
     obj.data = objUrl;
     obj.style.display = 'block';
     loading.textContent = 'Menü yükleniyor...';
     loading.style.display = 'block';
-    let objLoaded=false;
+
+    let objLoaded = false;
     const objTimeout = setTimeout(()=>{
-      if(!objLoaded) showFallback();
+      if(!objLoaded){
+        showFallback();
+      }
     }, 3500);
-    try{ obj.onload = function(){ objLoaded=true; clearTimeout(objTimeout); loading.style.display='none'; }; }catch(e){}
+
+    try{
+      obj.onload = function(){ objLoaded = true; clearTimeout(objTimeout); loading.style.display='none'; };
+    }catch(e){}
   }
 
+  // Son fallback: kullanıcıyı yeni sekmede raw PDF açmaya yönlendir / göster buton
   function showFallback(){
     loading.style.display = 'none';
     fallbackBox.style.display = 'block';
     fallbackOpen.href = urlWithV(RAW_PDF);
   }
 
+  // Kullanıcı "Yenile" butonu bastığında cache-buster'lı yeni URL ile tekrar dene
   refreshBtn.addEventListener('click', function(){
+    // Force reload with new cache buster
+    // Clear pdfPagesContainer if visible
     pdfPagesContainer.innerHTML = '';
     tryEmbed();
   });
 
+  // sayfa ilk açılışta embed dene
   tryEmbed();
 
+  // Eğer iframe/obj/embed görünür durumda değilse ve 10s sonra hâlâ bir şey yoksa kesin fallback
   setTimeout(()=>{
-    const fVisible = frame.style.display !== 'none';
-    const oVisible = obj.style.display !== 'none';
-    const eVisible = embed.style.display !== 'none';
-    const pVisible = pdfPagesContainer.style.display !== 'none';
-    if(!fVisible && !oVisible && !eVisible && !pVisible) showFallback();
+    const fVisible = frame && frame.style.display !== 'none';
+    const oVisible = obj && obj.style.display !== 'none';
+    const eVisible = embed && embed.style.display !== 'none';
+    const pVisible = pdfPagesContainer && pdfPagesContainer.style.display !== 'none';
+    if(!fVisible && !oVisible && !eVisible && !pVisible){
+      showFallback();
+    }
   },10000);
+
 })();
-</script>
-</body>
+</script></body>
   </html>
